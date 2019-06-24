@@ -7,6 +7,9 @@ When activated, once the client will try to purchase the same product again – 
 That can be handy when giving free trial versions.
 This module will help you to stop free trial versions abuse, as the client will not be able to download more then once product.
 
+WHMCS 7+
+PHP 7.1+
+
 # Installation
 
 Upload the folder "limit_purchase" (as is) to your WHMCS installtion.
