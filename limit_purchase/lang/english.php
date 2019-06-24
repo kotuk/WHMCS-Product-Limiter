@@ -27,6 +27,6 @@ $_ADDONLANG['active'] = "Active";
 $_ADDONLANG['yes'] = "Yes";
 $_ADDONLANG['no'] = "No";
 $_ADDONLANG['newversiontitle'] = "New version is available";
-$_ADDONLANG['newversiondesc'] = "New version is available [ %1\$s ].<br /><a href='http://www.jetserver.net/doc/wpl/rnotes' target='_blank'>Please go to our product page for more details</a>";
+$_ADDONLANG['newversiondesc'] = "New version is available [ %1\$s ].<br /><a href='http://www.jetserver.net/doc/wpl/rnotes1' target='_blank'>Please go to our product page for more details</a>";
 
 ?>
