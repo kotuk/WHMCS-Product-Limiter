@@ -1,4 +1,5 @@
 <?php
+use WHMCS\Database\Capsule;
 
 if (!defined("WHMCS"))
 	die("This file cannot be accessed directly");
@@ -16,31 +17,30 @@ class limit_purchase
 	{
 		$this->config = array();
 
-		$sql = "SELECT *
-			FROM mod_limit_purchase_config";
-		$result = mysqli_query($sql);
-
-		while($config_details = mysqli_fetch_assoc($result))
-		{
-			$this->config[$config_details['name']] = $config_details['value'];
+		foreach (Capsule::table('mod_limit_purchase_config')->get() as $c) {
+			$this->config[$c->name] = $c->value;
 		}
-		mysqli_free_result($result);
 	}
 
 	function setConfig($name, $value)
 	{
 		if(isset($this->config[$name]))
 		{
-			$sql = "UPDATE mod_limit_purchase_config
-				SET value = '" . mysqli_escape_string($value) . "'
-				WHERE name = '" . mysqli_escape_string($name) . "'";
-			$result = mysqli_query($sql);
+			Capsule::table('mod_limit_purchase_config')
+				->where('name', mysqli_escape_string($name))
+				->update([
+					'value' => mysqli_escape_string($value)
+				]
+			);
 		}
 		else
 		{
-			$sql = "INSERT INTO mod_limit_purchase_config (`name`,`value`) VALUES
-				('" . mysqli_escape_string($name) . "','" . mysqli_escape_string($value) . "')";
-			$result = mysqli_query($sql);
+			Capsule::table('mod_limit_purchase_config')
+				->insert([
+					'name'  => mysqli_escape_string($name),
+					'value' => mysqli_escape_string($value)
+				]
+			);
 		}
 
 		$this->config[$name] = $value;
@@ -49,20 +49,19 @@ class limit_purchase
 	function getLimitedProducts()
 	{
 		$output = array();
-
-		$sql = "SELECT l.*
-			FROM mod_limit_purchase as l
-			INNER JOIN tblproducts as p
-			ON p.id = l.product_id
-			WHERE l.active = 1";
-		$result = mysqli_query($sql);
-
-		while($limits = mysqli_fetch_assoc($result))
-		{
-			$output[$limits['product_id']] = array('limit' => $limits['limit'], 'error' => $limits['error']);
+		
+		$result = Capsule::table('mod_limit_purchase')
+			->join('tblproducts', 'mod_limit_purchase.product_id', '=', 'tblproducts.id')
+			->where('mod_limit_purchase.active', 1)
+			->get();
+		
+		foreach ($result as $r) {
+			$output[$r->product_id] = array(
+				'limit' => $r->limit,
+				'error' => $r->error
+			);
 		}
-		mysqli_free_result($result);
-
+		
 		return $output;
 	}
 }
