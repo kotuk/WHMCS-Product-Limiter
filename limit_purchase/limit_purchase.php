@@ -1,4 +1,5 @@
 <?php
+use WHMCS\Database\Capsule;
 
 if (!defined("WHMCS"))
 	die("This file cannot be accessed directly");
@@ -9,44 +10,56 @@ function limit_purchase_config()
 		"name" 		=> "Product Limiter",
 		"description" 	=> "This addon allows you to limit the purchase of an products/services for each client",
 		"version" 	=> "1.0.6",
-		"author" 	=> "Idan Ben-Ezra",
+		"author" 	=> "KoTuK",
 		"language" 	=> "english",
 	);
 }
 
 function limit_purchase_activate() 
-{
-   	$sql = "CREATE TABLE IF NOT EXISTS `mod_limit_purchase_config` (
-			`name` varchar(255) NOT NULL,
-			`value` text NOT NULL,
-		PRIMARY KEY (`name`)
-		) ENGINE=MyISAM  DEFAULT CHARSET=utf8";
-	$result = mysqli_query($sql);
-
-	if($result) 
-	{
-		$sql = "INSERT INTO mod_limit_purchase_config (`name`,`value`) VALUES
-			('localkey', ''),
-			('version_check', '0'),
-			('version_new', '')";
-		$result = mysqli_query($sql);
+{	
+	try {
+		/** Delete the table */
+		Capsule::schema()->dropIfExists('mod_limit_purchase_config');
+		Capsule::schema()->dropIfExists('mod_limit_purchase');
+		
+	    Capsule::schema()->create(
+			'mod_limit_purchase_config',
+			function ($table) {
+				/** @var \Illuminate\Database\Schema\Blueprint $table */
+				$table->string('name', 255);
+				$table->text('value');
+			}
+	    );
+		
+	    Capsule::schema()->create(
+			'mod_limit_purchase',
+			function ($table) {
+				/** @var \Illuminate\Database\Schema\Blueprint $table */
+				$table->increments('id');
+				$table->integer('product_id')->default(0);
+				$table->integer('limit')->default(0);
+				$table->text('error');
+				$table->tinyInteger('active')->default(0);
+			}
+	    );
+		
+		Capsule::table('mod_limit_purchase_config')->insert([
+			[
+				"name" => "localkey",
+				"value" => ''
+			],
+			[
+				"name" => "version_check",
+				"value" => '0'
+			],
+			[
+				"name" => "version_new",
+				"value" => ''
+			],
+		]);
+	} catch (\Exception $e) {
+	    $error[] = "Unable to create table: {$e->getMessage()}";
 	}
-	else
-	{
-		$error[] = "Can't create the table `mod_limit_purchase_config`. SQL Error: " . mysqli_error();
-	}
-
-   	$sql = "CREATE TABLE IF NOT EXISTS `mod_limit_purchase` (
-			`id` int(11) NOT NULL AUTO_INCREMENT,
-			`product_id` int(11) NOT NULL DEFAULT '0',
-			`limit` int(11) NOT NULL DEFAULT '0',
-			`error` varchar(255) NOT NULL,
-			`active` tinyint(1) NOT NULL DEFAULT '0',
-		PRIMARY KEY (`id`)
-		) ENGINE=MyISAM  DEFAULT CHARSET=utf8 AUTO_INCREMENT=1";
-	$result = mysqli_query($sql);
-
-	if(!$result) $error[] = "Can't create the table `mod_limit_purchase`. SQL Error: " . mysqli_error();
 
 	if(sizeof($error))
 	{
@@ -61,16 +74,13 @@ function limit_purchase_activate()
 
 function limit_purchase_deactivate() 
 {
-	$sql = "DROP TABLE IF EXISTS `mod_limit_purchase`";
-	$result = mysqli_query($sql);
-
-	if(!$result) $error[] = "Can't drop the table `mod_limit_purchase`. SQL Error: " . mysqli_error();
-
-	$sql = "DROP TABLE IF EXISTS `mod_limit_purchase_config`";
-	$result = mysqli_query($sql);
-
-	if(!$result) $error[] = "Can't drop the table `mod_limit_purchase_config`. SQL Error: " . mysqli_error();
-
+	try {
+		Capsule::schema()->dropIfExists('mod_limit_purchase_config');
+		Capsule::schema()->dropIfExists('mod_limit_purchase');
+	} catch (\Exception $e) {
+	    $error[] = "Unable to create table: {$e->getMessage()}";
+	}
+	
 	return array(
 		'status'	=> sizeof($error) ? 'error' : 'success',
 		'description'	=> sizeof($error) ? implode(" -> ", $error) : '',
@@ -81,21 +91,31 @@ function limit_purchase_upgrade($vars)
 {
 	if(version_compare($vars['version'], '1.0.1', '<'))
 	{
-	   	$sql = "CREATE TABLE IF NOT EXISTS `mod_limit_purchase_config` (
-				`name` varchar(255) NOT NULL,
-				`value` text NOT NULL,
-			PRIMARY KEY (`name`)
-			) ENGINE=MyISAM  DEFAULT CHARSET=utf8";
-		$result = mysqli_query($sql);
-
-		if($result) 
-		{
-			$sql = "INSERT INTO mod_limit_purchase_config (`name`,`value`) VALUES
-				('localkey', ''),
-				('version_check', '0'),
-				('version_new', '')";
-			$result = mysqli_query($sql);
-		}
+		Capsule::schema()->dropIfExists('mod_limit_purchase_config');
+		
+	    Capsule::schema()->create(
+			'mod_limit_purchase_config',
+			function ($table) {
+				/** @var \Illuminate\Database\Schema\Blueprint $table */
+				$table->string('name', 255);
+				$table->text('value');
+			}
+	    );
+		
+		Capsule::table('mod_limit_purchase_config')->insert([
+			[
+				"name" => "localkey",
+				"value" => ''
+			],
+			[
+				"name" => "version_check",
+				"value" => '0'
+			],
+			[
+				"name" => "version_new",
+				"value" => ''
+			],
+		]);
 	}
 }
 
@@ -140,7 +160,7 @@ function limit_purchase_output($vars)
 	$product_id 	= intval($_REQUEST['product_id']);
 	$id 		= intval($_REQUEST['id']);
 	$limit 		= intval($_REQUEST['limit']);
-	$error 		= mysqli_escape_string($_REQUEST['error']);
+	$error 		= mysqli_escape_string($_REQUEST['error']) ? mysqli_escape_string($_REQUEST['error']) : 'Can only be purchased once';
 	$active 	= intval($_REQUEST['active']);
 
 	$manage_details = array();
@@ -152,18 +172,14 @@ function limit_purchase_output($vars)
 
 			if($id)
 			{
-				$sql = "SELECT id
-					FROM mod_limit_purchase
-					WHERE id = '{$id}'";
-				$result = mysqli_query($sql);
-				$limit_details = mysqli_fetch_assoc($result);
+				$result = Capsule::table('mod_limit_purchase')->where('id', $id)->get();
+				$limit_details = $result[0]->id;
 
 				if($limit_details)
 				{
-					$sql = "UPDATE mod_limit_purchase
-						SET active = " . ($action == 'disable' ? 0 : 1) . "
-						WHERE id = '{$id}'";
-					mysqli_query($sql);
+					Capsule::table('mod_limit_purchase')->where('id', $id)->update([
+						'active' => $action == 'disable' ? 0 : 1
+					]);
 
 					$_SESSION['limit_purchase'] = array(
 						'type'		=> 'success',
@@ -195,27 +211,25 @@ function limit_purchase_output($vars)
 
 			if($product_id)
 			{
-				$sql = "SELECT id
-					FROM tblproducts
-					WHERE id = '{$product_id}'";
-				$result = mysqli_query($sql);
-				$product_details = mysqli_fetch_assoc($result);
+				$result = Capsule::table('tblproducts')->where('id', $product_id)->get();
+
+				$product_details = $result[0]->id;
 
 				if($product_details)
 				{
-					$sql = "SELECT id
-						FROM mod_limit_purchase
-						WHERE product_id = '{$product_id}'";
-					$result = mysqli_query($sql);
-					$limit_details = mysqli_fetch_assoc($result);
+					$result = Capsule::table('mod_limit_purchase')->where('product_id', $product_id)->get();
+					$limit_details = $result[0]->id;
 
 					if(!$limit_details)
 					{
 						if($limit > 0 && $error)
 						{
-							$sql = "INSERT INTO mod_limit_purchase (`product_id`,`limit`,`error`,`active`) VALUES
-								('{$product_id}','{$limit}','{$error}','" . ($active ? 1 : 0) . "')";
-							mysqli_query($sql);
+							Capsule::table('mod_limit_purchase')->insert([
+								'product_id' => $product_id,
+								'limit'      => $limit,
+								'error'      => $error,
+								'active'     => $active ? 1 : 0
+							]);
 
 							$_SESSION['limit_purchase'] = array(
 								'type'		=> 'success',
@@ -267,30 +281,28 @@ function limit_purchase_output($vars)
 
 			if($id)
 			{
-				$sql = "SELECT id
-					FROM mod_limit_purchase
-					WHERE id = '{$id}'";
-				$result = mysqli_query($sql);
-				$limit_details = mysqli_fetch_assoc($result);
+				$result = Capsule::table('mod_limit_purchase')->where('id', $id)->get();
+				$limit_details = $result[0]->id;
 
 				if($limit_details)
 				{
 					if($product_id)
 					{
-						$sql = "SELECT id
-							FROM tblproducts
-							WHERE id = '{$product_id}'";
-						$result = mysqli_query($sql);
-						$product_details = mysqli_fetch_assoc($result);
-
+						$result = Capsule::table('tblproducts')->where('id', $product_id)->get();
+						$product_details = $result[0]->id;
+						
 						if($product_details)
 						{
 							if($limit > 0 && $error)
 							{
-								$sql = "UPDATE mod_limit_purchase 
-									SET `product_id` = '{$product_id}', `limit` = '{$limit}', `error` = '{$error}', active = '" . ($active ? 1 : 0) . "'
-									WHERE id = '{$id}'";
-								mysqli_query($sql);
+								Capsule::table('mod_limit_purchase')
+									->where('id', $id)
+									->update([
+									'product_id' => $product_id,
+									'limit'      => $limit,
+									'error'      => $error,
+									'active'     => $active ? 1 : 0
+								]);
 
 								$_SESSION['limit_purchase'] = array(
 									'type'		=> 'success',
@@ -350,18 +362,12 @@ function limit_purchase_output($vars)
 
 			if($id)
 			{
-				$sql = "SELECT id
-					FROM mod_limit_purchase
-					WHERE id = '{$id}'";
-				$result = mysqli_query($sql);
-				$limit_details = mysqli_fetch_assoc($result);
-
+				$result = Capsule::table('mod_limit_purchase')->where('id', $id)->get();
+				$limit_details = $result[0]->id;
+				
 				if($limit_details)
 				{
-					$sql = "DELETE
-						FROM mod_limit_purchase
-						WHERE id = '{$id}'";
-					mysqli_query($sql);
+					Capsule::table('mod_limit_purchase')->where('id', $id)->delete();
 
 					$_SESSION['limit_purchase'] = array(
 						'type'		=> 'success',
@@ -392,19 +398,13 @@ function limit_purchase_output($vars)
 
 			if($id)
 			{
-				$sql = "SELECT id
-					FROM mod_limit_purchase
-					WHERE id = '{$id}'";
-				$result = mysqli_query($sql);
-				$limit_details = mysqli_fetch_assoc($result);
+				$result = Capsule::table('mod_limit_purchase')->where('id', $id)->get();
+				$limit_details = $result[0]->id;
 
 				if($limit_details)
 				{
-					$sql = "SELECT *
-						FROM mod_limit_purchase
-						WHERE id = '{$id}'";
-					$result = mysqli_query($sql);
-					$manage_details = mysqli_fetch_assoc($result);
+					$result = Capsule::table('mod_limit_purchase')->where('id', $id)->get();
+					$manage_details = $result[0];
 				}
 				else
 				{
@@ -430,25 +430,18 @@ function limit_purchase_output($vars)
 		break;
 	}
 
-	$sql = "SELECT *
-		FROM mod_limit_purchase";
-	$result = mysqli_query($sql);
-
-	while($row = mysqli_fetch_assoc($result))
-	{
-		if($manage_details['product_id'] != $row['product_id'])
+	$result = Capsule::table('mod_limit_purchase')->get();
+	
+	foreach($result as $row) {
+		if($manage_details->product_id != $row->product_id)
 		{
-			$sql = "SELECT name
-				FROM tblproducts
-				WHERE id = '{$row['product_id']}'";
-			$result2 = mysqli_query($sql);
-			$product = mysqli_fetch_assoc($result2);
+			$result2 = Capsule::table('tblproducts')->where('id', $row->product_id)->get();
+			$product = $result2[0];
 
-			$ids[] = $row['product_id'];
-			$limits[] = array_merge($row, array('product_details' => $product));
+			$ids[] = $row->product_id;
+			$limits[] = array_merge((array)$row, array('product_details' => $product));
 		}
 	}
-	mysqli_free_result($result);
 
 	if(isset($_SESSION['limit_purchase']))
 	{
@@ -460,23 +453,11 @@ function limit_purchase_output($vars)
 <?php
 		unset($_SESSION['limit_purchase']);
 	}
-
-	$products = array();
-
-	$sql = "SELECT id, name
-		FROM tblproducts
-		" . (sizeof($ids) ? "WHERE id NOT IN('" . implode("','", $ids) . "')" : '');
-	$result = mysqli_query($sql);
-
-	while($product_details = mysqli_fetch_assoc($result))
-	{
-		$products[] = $product_details;
-	}
-	mysqli_free_result($result);
-
+	
+	$products = Capsule::table('tblproducts')->whereNotIn('id', $ids)->get();
 ?>
 	<h2><?php echo (sizeof($manage_details) ? $vars['_lang']['editlimit'] : $vars['_lang']['addlimit']); ?></h2>
-	<form action="<?php echo $modulelink; ?>&amp;action=<?php echo (sizeof($manage_details) ? 'edit&amp;id=' . $manage_details['id'] : 'add'); ?>" method="post">
+	<form action="<?php echo $modulelink; ?>&amp;action=<?php echo (sizeof($manage_details) ? 'edit&amp;id=' . $manage_details->id : 'add'); ?>" method="post">
 
 	<table width="100%" cellspacing="2" cellpadding="3" border="0" class="form">
 	<tbody>
@@ -488,24 +469,24 @@ function limit_purchase_output($vars)
 				<option selected="selected" value="0"><?php echo $vars['_lang']['selectproduct']; ?></option>
 				<?php } ?>
 				<?php foreach($products as $product_details) { ?>
-				<option<?php if($manage_details['product_id'] == $product_details['id']) { ?> selected="selected"<?php } ?> value="<?php echo $product_details['id']; ?>"><?php echo $product_details['name']; ?></option>
+				<option <?php if($manage_details->product_id == $product_details->id) { ?> selected="selected"<?php } ?> value="<?php echo $product_details->id; ?>"><?php echo $product_details->name; ?></option>
 				<?php } ?>
 			</select>
 		</td>
 	</tr>
 	<tr>
 		<td class="fieldlabel"><?php echo $vars['_lang']['limit']; ?></td>
-		<td class="fieldarea"><input type="text" value="<?php echo $manage_details['limit']; ?>" size="5" name="limit" /> <?php echo $vars['_lang']['limitdesc']; ?></td>
+		<td class="fieldarea"><input type="text" value="<?php echo $manage_details->limit; ?>" size="5" name="limit" /> <?php echo $vars['_lang']['limitdesc']; ?></td>
 	</tr>
 	<tr>
 		<td class="fieldlabel"><?php echo $vars['_lang']['errormessage']; ?></td>
-		<td class="fieldarea"><input type="text" value="<?php echo $manage_details['error']; ?>" size="65" name="error" /><br /><?php echo $vars['_lang']['errormessagedesc']; ?></td>
+		<td class="fieldarea"><input type="text" value="<?php echo $manage_details->error; ?>" size="65" name="error" /><br /><?php echo $vars['_lang']['errormessagedesc']; ?></td>
 	</tr>
 	<tr>
 		<td class="fieldlabel"><?php echo $vars['_lang']['active']; ?></td>
 		<td class="fieldarea">
-			<input type="radio" <?php if($manage_details['active']) { ?>checked="checked" <?php } ?>value="1" name="active" /> <?php echo $vars['_lang']['yes']; ?>
-			<input type="radio" <?php if(!$manage_details['active']) { ?>checked="checked" <?php } ?>value="0" name="active" /> <?php echo $vars['_lang']['no']; ?>
+			<input type="radio" <?php if($manage_details->active) { ?>checked="checked" <?php } ?>value="1" name="active" /> <?php echo $vars['_lang']['yes']; ?>
+			<input type="radio" <?php if(!$manage_details->active) { ?>checked="checked" <?php } ?>value="0" name="active" /> <?php echo $vars['_lang']['no']; ?>
 		</td>
 	</tr>
 	</tbody>
@@ -535,10 +516,10 @@ function limit_purchase_output($vars)
 		</tr>
 		<?php foreach($limits as $limit_details) { ?>
 		<tr>
-			<td><?php echo $limit_details['product_details']['name']; ?></td>
+			<td><?php echo $limit_details['product_details']->name; ?></td>
 			<td style="text-align: center;"><?php echo $limit_details['limit']; ?></td>
-			<td><?php echo str_replace('{PNAME}', $limit_details['product_details']['name'], $limit_details['error']); ?></td>
-			<td><a href="<?php echo $modulelink; ?>&amp;action=<?php echo ($row['active'] ? 'disable' : 'enable'); ?>&amp;id=<?php echo $limit_details['id']; ?>"><img src="images/icons/<?php echo ($limit_details['active'] ? 'tick.png' : 'disabled.png'); ?>" /></a></td>
+			<td><?php echo str_replace('{PNAME}', $limit_details['product_details']->name, $limit_details['error']); ?></td>
+			<td><a href="<?php echo $modulelink; ?>&amp;action=<?php echo ($row->active ? 'disable' : 'enable'); ?>&amp;id=<?php echo $limit_details['id']; ?>"><img src="images/icons/<?php echo ($limit_details['active'] ? 'tick.png' : 'disabled.png'); ?>" /></a></td>
 			<td><a href="<?php echo $modulelink; ?>&amp;action=manage&amp;id=<?php echo $limit_details['id']; ?>"><img border="0" src="images/edit.gif" /></a></td>
 			<td><a href="<?php echo $modulelink; ?>&amp;action=delete&amp;id=<?php echo $limit_details['id']; ?>"><img width="16" height="16" border="0" alt="Delete" src="images/delete.gif" /></a></td>
 		</tr>
@@ -549,7 +530,5 @@ function limit_purchase_output($vars)
 
 	<?php } ?>
 <?php
-
 }
-
 ?>
